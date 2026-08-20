@@ -1,7 +1,6 @@
 # biomod2 SDM Runner
 
-<!-- Zenodo rozetini ILK SURUMDEN SONRA buraya yapistirin -->
-<!-- [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX) -->
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22036156.svg)](https://doi.org/10.5281/zenodo.22036156)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![R >= 4.1](https://img.shields.io/badge/R-%3E%3D4.1-blue.svg)](https://cran.r-project.org/)
 [![biomod2 >= 4.3](https://img.shields.io/badge/biomod2-%3E%3D4.3-brightgreen.svg)](https://biomodhub.github.io/biomod2/)
