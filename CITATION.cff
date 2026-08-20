@@ -1,0 +1,45 @@
+cff-version: 1.2.0
+title: "biomod2 SDM Runner: a bilingual Shiny front end for biomod2"
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - family-names: "Ozdemir"
+    given-names: "Serkan"
+    affiliation: "Isparta University of Applied Sciences, Faculty of Forestry"
+    # orcid: "https://orcid.org/0000-0002-9425-3724"   # <- kendi ORCID'inizi yazin
+repository-code: "https://github.com/srknozdemir/biomod2-sdm-runner"
+abstract: >-
+  A bilingual (English/Turkish) Shiny graphical interface for the biomod2 R
+  package. All modelling is performed by biomod2; this application provides
+  a front end covering presence/absence, continuous (count, abundance,
+  relative) and nominal (multiclass, ordinal) response types, literature-based
+  parameter selection scaled to the data, ensemble modelling with MaxTSS
+  thresholding, stacked species distribution modelling for potential species
+  richness, and publication-format response curves. Applied settings, session
+  information and package versions are recorded on every run to support
+  reporting under the ODMAP protocol. Users should cite biomod2.
+references:
+  - type: software
+    title: "biomod2: Ensemble Platform for Species Distribution Modeling"
+    authors:
+      - family-names: "Gueguen"
+        given-names: "Maya"
+      - family-names: "Blancheteau"
+        given-names: "Helene"
+      - family-names: "Lemaire-Patin"
+        given-names: "Remi"
+      - family-names: "Thuiller"
+        given-names: "Wilfried"
+    year: 2026
+    url: "https://biomodhub.github.io/biomod2/"
+keywords:
+  - species distribution modelling
+  - biomod2
+  - ensemble modelling
+  - stacked SDM
+  - species richness
+  - R
+  - Shiny
+license: GPL-3.0-or-later
+version: "1.0.0"
+date-released: "2026-08-20"
