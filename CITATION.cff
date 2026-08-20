@@ -6,7 +6,7 @@ authors:
   - family-names: "Ozdemir"
     given-names: "Serkan"
     affiliation: "Isparta University of Applied Sciences, Faculty of Forestry"
-    # orcid: "https://orcid.org/0000-0002-9425-3724"
+    orcid: "https://orcid.org/0000-0002-9425-3724"
 repository-code: "https://github.com/srknozdemir/biomod2-sdm-runner"
 abstract: >-
   A bilingual (English/Turkish) Shiny graphical interface for the biomod2 R
