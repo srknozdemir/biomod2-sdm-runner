@@ -1464,6 +1464,10 @@ if (!do_future) {
 
   ref_names <- names(env)
   nf <- min(as.integer(cfg$future_n), length(cfg$future))
+  # registry of written projections -> GCM ensemble + range change (gcm_ensemble.R)
+  gcm_registry <- data.frame(period = character(0), ssp = character(0), gcm = character(0),
+                             label = character(0), tag = character(0), folder = character(0),
+                             stringsAsFactors = FALSE)
 
   for (i in seq_len(nf)) {
     fblock <- cfg$future[[i]]
@@ -1488,7 +1492,12 @@ if (!do_future) {
 
       set_status(paste0("FUTURE PROJECTION: ", period_label, " / ", sc_label))
 
-      env_f <- load_env_asc(asc_dir_future, ref_names = ref_names)
+      env_f <- tryCatch(load_env_asc(asc_dir_future, ref_names = ref_names), error = function(e) e)
+      if (inherits(env_f, "error")) {
+        warning("Future layers could not be read (", period_label, "/", sc_label, "): ",
+                conditionMessage(env_f))
+        next
+      }
 
       proj_name <- paste0(
         "future_", i, "_", j, "_",
@@ -1520,6 +1529,11 @@ if (!do_future) {
       if (!is.null(ens_f)) {
         write_proj_rasters(ens_f, paste0(proj_name, "_ensemble"),
                            rasters_dir, em_cutoffs, scale_div = SCALE_DIV)
+        gcm_registry[nrow(gcm_registry) + 1, ] <- list(
+          as.character(period_label),
+          if (is.null(sc$ssp)) NA_character_ else as.character(sc$ssp),
+          if (is.null(sc$gcm)) NA_character_ else as.character(sc$gcm),
+          as.character(sc_label), paste0(proj_name, "_ensemble"), as.character(asc_dir_future))
       }
 
       tryCatch({
@@ -1536,6 +1550,18 @@ if (!do_future) {
         warning("Failed to export future projection TIF for ", proj_name, ": ", e$message)
       })
     }
+  }
+
+  # -------------------- GCM ENSEMBLE + RANGE CHANGE MAPS --------------------
+  if (nrow(gcm_registry) > 0 && !isFALSE(cfg$change_maps)) {
+    set_status("GCM ENSEMBLE + RANGE CHANGE")
+    gcm_file <- file.path(getwd(), "gcm_ensemble.R")
+    if (file.exists(gcm_file)) {
+      source(gcm_file, encoding = "UTF-8")
+      tryCatch(gcm_postprocess(cfg, gcm_registry, rasters_dir, plots_dir, cfg$out_dir,
+                               mode = "binary", resp_lab = "habitat suitability"),
+               error = function(e) warning("GCM ensemble / range change failed: ", conditionMessage(e)))
+    } else warning("gcm_ensemble.R not found -> GCM ensemble and range change skipped.")
   }
 
   set_status("DONE")

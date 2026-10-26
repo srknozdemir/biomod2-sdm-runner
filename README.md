@@ -51,7 +51,7 @@ Check that you are in the right place:
 list.files(pattern = "[.]R$")
 ```
 
-You should see ten `.R` files. If the list is empty, `setwd()` pointed somewhere else.
+You should see eleven `.R` files. If the list is empty, `setwd()` pointed somewhere else.
 
 ### Step 3 — Install the required packages
 
@@ -96,7 +96,7 @@ source("check_code.R")
 Expected output:
 
 ```
-115 fonksiyon denetlendi. Tanimsiz degisken referansi YOK.
+130 fonksiyon denetlendi. Tanimsiz degisken referansi YOK.
 ```
 
 This takes a couple of seconds and confirms that no script file is missing or
@@ -158,7 +158,7 @@ or is launched for you in the background.
 | `run_biomod.R` | presence/absence runs | no, launched automatically |
 | `run_biomod_cont.R` | continuous / nominal runs | no, launched automatically |
 | `run_ssdm.R` | stacked SDM runs | no, launched automatically |
-| `biomod_opts.R`, `ssdm_convert.R`, `plot_response_threshold.R`, `i18n.R` | loaded as needed | no |
+| `biomod_opts.R`, `ssdm_convert.R`, `plot_response_threshold.R`, `gcm_ensemble.R`, `i18n.R` | loaded as needed | no |
 
 Modelling runs in a **separate background process**, so the interface stays
 responsive. Progress appears in the Log tab while it works, and you can close the
@@ -184,8 +184,9 @@ the first place to look.
 
 ## What it can do
 
-The application supports **three ways of describing where a species is**, and a
-fourth mode that combines many species at once.
+The application supports **three ways of describing where a species is**, a
+fourth mode that combines many species at once, and multi-GCM future
+projections with change maps for all of them.
 
 ### 1. Presence / absence
 
@@ -241,6 +242,48 @@ Zeros in the matrix are treated as real absences. Species with too few records
 can be filtered out by frequency (percentage of plots), and species found in
 almost every plot are handled with pseudo-absences rather than being discarded.
 
+### 5. Several climate models → GCM ensemble and change maps
+
+Future climate is uncertain mainly because climate models (GCMs) disagree. The
+application therefore projects **each GCM separately** and combines the
+predictions afterwards, so that the disagreement among GCMs remains visible
+instead of being averaged away in the climate layers (Araújo & New 2007).
+
+Arrange the future rasters as one folder per period × scenario × GCM:
+
+```
+climate/
+  current/
+  future_2041-2060_ssp245_MPI-ESM1-2-HR/
+  future_2041-2060_ssp245_IPSL-CM6A-LR/
+  future_2081-2100_ssp585_UKESM1-0-LL/
+  ...
+```
+
+Under **Future** choose *Automatic*, give the `climate` folder, press
+**Scan folder**, and tick the periods, SSPs and GCMs you want. Optionally pick
+GCMs for a sensitivity ensemble that leaves them out, and a polygon (for example
+a catchment) inside which the change statistics are repeated.
+
+For every period × SSP you get:
+
+| Output | Meaning |
+|---|---|
+| `gcm_<period>_<ssp>_mean.tif`, `_sd.tif` | mean of the GCM predictions and the SD among GCMs |
+| `change_<period>_<ssp>_abs.tif`, `_pct.tif` | future − current, and the same as a percentage |
+| `change_<period>_<ssp>_agreement.tif` | share of GCMs whose change has the sign of the mean change |
+| `change_<period>_<ssp>_class.tif` | 1 robust decrease · 2 decrease, low agreement · 3 no change · 4 increase, low agreement · 5 robust increase |
+| `range_<period>_<ssp>_<GCM>.tif`, `_consensus.tif` | presence/absence only: −2 loss · −1 stable presence · 0 stable absence · 1 gain |
+| `change_summary.csv` | area-weighted mean change; area and % of the study area that increases, decreases or stays unchanged |
+| `range_change_summary.csv` | Loss, Gain, PercLoss, PercGain, SpeciesRangeChange (as in `BIOMOD_RangeSize`) |
+| `plots/change_*.png`, `plots/range_*.png`, `plots/change_overview.png` | ready-made figures |
+
+A change counts as **robust** when at least the chosen share of GCMs (default
+0.8, i.e. 4 of 5) agrees on its sign; changes smaller than the no-change
+tolerance (default 5 % of the SD of the current map) are classed as no change.
+The same maps are produced in manual mode; with one folder per scenario the GCM
+spread layers are simply omitted.
+
 ---
 
 ## Preparing your data
@@ -295,6 +338,7 @@ Everything is written to `results/<run_id>/`:
 - binary maps thresholded at MaxTSS
 - uncertainty layers (EMcv, EMca)
 - species richness and richness change maps, if stacked SDM was used
+- GCM ensemble (mean, SD), change, agreement and range-change maps for future scenarios
 
 **Figures** (`plots/`)
 - model evaluation, variable importance
@@ -306,6 +350,9 @@ Everything is written to `results/<run_id>/`:
 |---|---|
 | `auc_tss_summary.csv` | metrics per algorithm, and which entered the ensemble |
 | `ensemble_maxTSS_cutoffs.csv` | thresholds on both the 0–1000 and 0–1 scales |
+| `change_summary.csv` | projected change per period × SSP × GCM and for the GCM ensemble |
+| `range_change_summary.csv` | gain / loss statistics (presence/absence) |
+| `gcm_scenario_registry.csv` | which folder, GCM, SSP and period each projection came from |
 | `modeling_options_applied.csv` | every parameter actually used |
 | `species_summary.csv` | per-species results (stacked SDM) |
 | `sessionInfo.txt`, `package_versions.csv` | software versions used |
@@ -380,6 +427,7 @@ matrices for stacked modelling, and in recording applied parameters for reportin
 | `run_biomod.R` | presence/absence pipeline |
 | `run_biomod_cont.R` | continuous and nominal pipeline |
 | `run_ssdm.R` | stacked SDM (species richness) |
+| `gcm_ensemble.R` | GCM ensemble, change and range-change maps |
 | `biomod_opts.R` | parameter engine and shared helpers |
 | `plot_response_threshold.R` | threshold-coloured response curves |
 | `ssdm_convert.R` | species matrix conversion |
@@ -401,7 +449,8 @@ Barbet-Massin et al. (2012) for pseudo-absence weighting;
 Chen & Guestrin (2016) for XGBoost.
 
 Stacked SDM follows Guisan & Rahbek (2011), Calabrese et al. (2014) and
-D'Amen et al. (2015). Reporting follows Zurell et al. (2020).
+D'Amen et al. (2015). Combining projections across climate models follows
+Araújo & New (2007) and Thuiller et al. (2019). Reporting follows Zurell et al. (2020).
 
 Full references are listed in [`REFERENCES.md`](REFERENCES.md).
 

@@ -14,7 +14,8 @@ abstract: >-
   a front end covering presence/absence, continuous (count, abundance,
   relative) and nominal (multiclass, ordinal) response types, literature-based
   parameter selection scaled to the data, ensemble modelling with MaxTSS
-  thresholding, stacked species distribution modelling for potential species
+  thresholding, multi-GCM ensembles with change and range-change maps,
+  stacked species distribution modelling for potential species
   richness, and publication-format response curves. Applied settings, session
   information and package versions are recorded on every run to support
   reporting under the ODMAP protocol. Users should cite biomod2.
@@ -41,5 +42,5 @@ keywords:
   - R
   - Shiny
 license: GPL-3.0-or-later
-version: "1.0.0"
-date-released: "2026-08-20"
+version: "1.1.0"
+date-released: "2026-10-26"

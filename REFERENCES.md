@@ -36,6 +36,12 @@ Guisan A, Rahbek C (2011) SESAM - a new framework integrating macroecological an
 
 Schmitt S, Pouteau R, Justeau D, de Boissieu F, Birnbaum P (2017) ssdm: an r package to predict distribution of species richness and composition based on stacked species distribution models. *Methods in Ecology and Evolution* 8:1795–1803.
 
+## Climate-model ensembles and change maps
+
+Araújo MB, New M (2007) Ensemble forecasting of species distributions. *Trends in Ecology & Evolution* 22:42–47. https://doi.org/10.1016/j.tree.2006.09.010
+
+Thuiller W, Guéguen M, Renaud J, Karger DN, Zimmermann NE (2019) Uncertainty in ensembles of global biodiversity scenarios. *Nature Communications* 10:1446. https://doi.org/10.1038/s41467-019-09519-w
+
 ## Reporting and evaluation
 
 Allouche O, Tsoar A, Kadmon R (2006) Assessing the accuracy of species distribution models: prevalence, kappa and the true skill statistic (TSS). *Journal of Applied Ecology* 43:1223–1232.

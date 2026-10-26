@@ -6,7 +6,7 @@
 # bicimindeki tanimlar degerlendirilir (install.packages() asla tetiklenmez).
 if (!requireNamespace("codetools", quietly = TRUE)) stop("codetools gerekli")
 
-FILES <- c("i18n.R","ssdm_convert.R","biomod_opts.R","plot_response_threshold.R",
+FILES <- c("i18n.R","ssdm_convert.R","biomod_opts.R","plot_response_threshold.R","gcm_ensemble.R",
            "run_biomod.R","run_biomod_cont.R","run_ssdm.R","app.R","install_packages.R")
 
 KNOWN <- c("fluidPage","titlePanel","sidebarLayout","sidebarPanel","mainPanel","tabsetPanel",

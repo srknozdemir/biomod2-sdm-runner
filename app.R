@@ -55,7 +55,7 @@ library(shinyFiles)
 # =========================================================
 REQUIRED_FILES <- c("run_biomod.R", "run_biomod_cont.R", "run_ssdm.R",
                     "biomod_opts.R", "plot_response_threshold.R",
-                    "i18n.R", "ssdm_convert.R")
+                    "i18n.R", "ssdm_convert.R", "gcm_ensemble.R")
 
 for (.f in c("i18n.R", "ssdm_convert.R", "biomod_opts.R")) {
   if (file.exists(file.path(getwd(), .f))) source(file.path(getwd(), .f), encoding = "UTF-8")
@@ -635,13 +635,48 @@ ui <- fluidPage(
       tags$div(
         class = "boxpad",
         h4("Future (optional)"),
-        selectInput(
-          "future_n",
-          "How many future periods?",
-          choices = c("NA", "1", "2", "3", "4", "5"),
-          selected = "NA"
+        selectInput("future_mode", "Future scenario input",
+                    choices = c("Manual: one folder per scenario" = "manual",
+                                "Automatic: scan a folder of GCM x SSP x period folders" = "auto"),
+                    selected = "manual"),
+        conditionalPanel(
+          condition = "input.future_mode != 'auto'",
+          selectInput(
+            "future_n",
+            "How many future periods?",
+            choices = c("NA", "1", "2", "3", "4", "5"),
+            selected = "NA"
+          ),
+          uiOutput("ui_future_blocks")
         ),
-        uiOutput("ui_future_blocks")
+        conditionalPanel(
+          condition = "input.future_mode == 'auto'",
+          uiOutput("note_gcm"),
+          textInput("gcm_root", "Root folder with future_<period>_<ssp>_<GCM> folders (full path)", value = ""),
+          shinyDirButton("gcm_root_btn", "Browse", "Select the root climate folder"),
+          textInput("gcm_pattern", "Folder-name pattern (regex with 3 groups: period, SSP, GCM)",
+                    value = "^future_(.+?)_(ssp[0-9]{3})_(.+)$"),
+          checkboxInput("gcm_skip_ens", "Skip folders whose GCM name contains 'ENSEMBLE'", value = TRUE),
+          actionButton("gcm_scan", "\u2705 Scan folder"),
+          uiOutput("gcm_scan_ui"),
+          uiOutput("gcm_select_ui"),
+          uiOutput("gcm_selected_ui")
+        ),
+        conditionalPanel(
+          condition = "input.future_mode == 'auto' || input.future_n != 'NA'",
+          tags$hr(),
+          uiOutput("hdr_change"),
+          checkboxInput("change_maps",
+                        "Produce GCM ensemble and change maps (increase / decrease, range change)",
+                        value = TRUE),
+          numericInput("change_agree", "GCM agreement required for a robust change (0.5-1)",
+                       value = 0.8, min = 0.5, max = 1, step = 0.05),
+          numericInput("change_tol_frac", "No-change tolerance (fraction of the SD of the current map)",
+                       value = 0.05, min = 0, max = 1, step = 0.01),
+          textInput("change_mask", "Optional polygon or raster for change statistics (full path)", value = ""),
+          shinyFilesButton("change_mask_btn", "Browse", "Select a polygon (gpkg/shp) or raster", multiple = FALSE),
+          uiOutput("note_change")
+        )
       ),
 
       hr(),
@@ -729,7 +764,9 @@ server <- function(input, output, session) {
     dt_guess_nom = NULL,
     ssdm_mat = NULL,
     ssdm_xy = NULL,
-    ssdm_long = NULL
+    ssdm_long = NULL,
+    gcm_table = NULL,
+    gcm_missing = character(0)
   )
 
   make_run_id <- function()
@@ -771,7 +808,13 @@ server <- function(input, output, session) {
     list("apply_var_types","action","apply_vartypes"),
     list("check_csv","action","check_csv"),      list("check_jar","action","check_jar"),
     list("ssdm_check","action","ssdm_check"),    list("ssdm_convert","action","ssdm_convert"),
-    list("run","action","run_btn"),              list("refresh","action","refresh_btn")
+    list("run","action","run_btn"),              list("refresh","action","refresh_btn"),
+    list("gcm_root","text","gcm_root"),          list("gcm_pattern","text","gcm_pattern"),
+    list("change_mask","text","change_mask"),    list("future_mode","select","future_mode"),
+    list("gcm_skip_ens","check","gcm_skip_ens"), list("change_maps","check","change_maps"),
+    list("change_agree","numeric","change_agree"),
+    list("change_tol_frac","numeric","change_tol_frac"),
+    list("gcm_scan","action","gcm_scan")
   )
 
   observeEvent(lang(), {
@@ -806,6 +849,9 @@ server <- function(input, output, session) {
       choices = tr_choices(c("opt_adaptive","opt_bigboss","opt_tuned","opt_default"),
                            c("adaptive","bigboss","tuned","default"), lg),
       selected = isolate(input$opt_strategy) %||% "adaptive")
+    updateSelectInput(session, "future_mode",
+      choices = tr_choices(c("fm_manual","fm_auto"), c("manual","auto"), lg),
+      selected = isolate(input$future_mode) %||% "manual")
   }, ignoreInit = FALSE)
 
   hdr <- function(key) renderUI(h4(tr_(key, lang())))
@@ -826,6 +872,9 @@ server <- function(input, output, session) {
   output$note_scale    <- note("scale_note")
   output$note_rc       <- note("rc_note")
   output$note_opt      <- note("opt_note")
+  output$hdr_change    <- renderUI(tags$strong(tr_("change_hdr", lang())))
+  output$note_gcm      <- note("gcm_hint")
+  output$note_change   <- note("change_hint")
 
   # shinyFiles dugmeleri: etiket ve baslik cevrilir
   output$btn_asc_dir <- renderUI(
@@ -1225,6 +1274,97 @@ server <- function(input, output, session) {
       })
     }
   }
+
+  # ---- GCM x SSP x period folders (automatic future mode) ----
+  shinyDirChoose(input, "gcm_root_btn", roots = volumes, session = session)
+  observeEvent(input$gcm_root_btn, {
+    pth <- try(parseDirPath(volumes, input$gcm_root_btn), silent = TRUE)
+    if (!inherits(pth, "try-error") && length(pth) > 0 && nzchar(pth)) {
+      updateTextInput(session, "gcm_root", value = as.character(pth))
+    }
+  }, ignoreInit = TRUE)
+
+  shinyFileChoose(input, "change_mask_btn", roots = volumes, session = session,
+                  filetypes = c("gpkg", "shp", "geojson", "tif", "tiff", "asc"))
+  observeEvent(input$change_mask_btn, {
+    f <- try(parseFilePaths(volumes, input$change_mask_btn), silent = TRUE)
+    if (!inherits(f, "try-error") && nrow(f) > 0) {
+      updateTextInput(session, "change_mask", value = as.character(f$datapath[1]))
+    }
+  }, ignoreInit = TRUE)
+
+  # Scans <root> for folders named like future_<period>_<ssp>_<GCM> (pattern editable).
+  scan_gcm_root <- function(root, pattern, skip_ens = TRUE) {
+    if (is.null(root) || !nzchar(root) || !dir.exists(root)) return(NULL)
+    d <- list.dirs(root, recursive = FALSE, full.names = TRUE)
+    b <- basename(d)
+    m <- regmatches(b, regexec(pattern, b, ignore.case = TRUE))
+    ok <- vapply(m, length, 1L) == 4
+    if (!any(ok)) return(data.frame(folder = character(0), period = character(0),
+                                    ssp = character(0), gcm = character(0)))
+    tab <- data.frame(folder = d[ok],
+                      period = vapply(m[ok], `[`, "", 2),
+                      ssp    = tolower(vapply(m[ok], `[`, "", 3)),
+                      gcm    = vapply(m[ok], `[`, "", 4),
+                      stringsAsFactors = FALSE)
+    if (isTRUE(skip_ens)) tab <- tab[!grepl("ensemble", tab$gcm, ignore.case = TRUE), , drop = FALSE]
+    tab[order(tab$period, tab$ssp, tab$gcm), , drop = FALSE]
+  }
+
+  observeEvent(input$gcm_scan, {
+    tab <- tryCatch(scan_gcm_root(input$gcm_root, input$gcm_pattern %||% "", isTRUE(input$gcm_skip_ens)),
+                    error = function(e) NULL)
+    rv$gcm_table <- tab
+    rv$gcm_missing <- character(0)
+    if (!is.null(tab) && nrow(tab) > 0 && length(rv$current_vars) > 0) {
+      # same variable names as the current folder? (file names only; fast)
+      miss <- vapply(tab$folder, function(f) {
+        v <- make.names(tools::file_path_sans_ext(list.files(f, pattern = "\\.(asc|tif|tiff|grd)$",
+                                                             ignore.case = TRUE)), unique = TRUE)
+        length(setdiff(rv$current_vars, v)) > 0
+      }, logical(1))
+      rv$gcm_missing <- basename(tab$folder[miss])
+    }
+  }, ignoreInit = TRUE)
+
+  output$gcm_scan_ui <- renderUI({
+    tab <- rv$gcm_table
+    if (is.null(tab)) return(NULL)
+    if (nrow(tab) == 0) return(tags$div(class = "bad", tr_("gcm_none", lang())))
+    tagList(
+      tags$div(class = "ok", tr_("gcm_found", lang(), nrow(tab), length(unique(tab$period)),
+                                 length(unique(tab$ssp)), length(unique(tab$gcm)))),
+      if (length(rv$gcm_missing) > 0)
+        tags$div(class = "bad", tr_("gcm_var_miss", lang(), paste(rv$gcm_missing, collapse = ", ")))
+    )
+  })
+
+  output$gcm_select_ui <- renderUI({
+    tab <- rv$gcm_table
+    if (is.null(tab) || nrow(tab) == 0) return(NULL)
+    p <- unique(tab$period); sp <- unique(tab$ssp); g <- unique(tab$gcm)
+    tagList(
+      checkboxGroupInput("gcm_periods", tr_("gcm_periods", lang()), choices = p, selected = p, inline = TRUE),
+      checkboxGroupInput("gcm_ssps", tr_("gcm_ssps", lang()), choices = sp, selected = sp, inline = TRUE),
+      checkboxGroupInput("gcm_models", tr_("gcm_models", lang()), choices = g, selected = g),
+      selectInput("gcm_exclude", tr_("gcm_exclude", lang()), choices = g, selected = character(0),
+                  multiple = TRUE)
+    )
+  })
+
+  gcm_selection <- reactive({
+    tab <- rv$gcm_table
+    if (is.null(tab) || nrow(tab) == 0) return(tab)
+    tab[tab$period %in% (input$gcm_periods %||% character(0)) &
+        tab$ssp %in% (input$gcm_ssps %||% character(0)) &
+        tab$gcm %in% (input$gcm_models %||% character(0)), , drop = FALSE]
+  })
+
+  output$gcm_selected_ui <- renderUI({
+    sel <- gcm_selection()
+    if (is.null(sel) || is.null(rv$gcm_table) || nrow(rv$gcm_table) == 0) return(NULL)
+    tags$div(class = "smallnote", tr_("gcm_selected", lang(), nrow(sel), nrow(sel)))
+  })
 
   # ---- Future UI blocks (manual paths + check) ----
   output$ui_future_blocks <- renderUI({
@@ -2172,7 +2312,12 @@ server <- function(input, output, session) {
         }
       }
     }
-    if (!is.null(input$future_n) && input$future_n != "NA") {
+    auto_future <- identical(input$future_mode, "auto")
+    if (auto_future) {
+      sel <- gcm_selection()
+      if (is.null(sel) || nrow(sel) == 0) problems <- c(problems, tr_("err_gcm_none", lang()))
+    }
+    if (!auto_future && !is.null(input$future_n) && input$future_n != "NA") {
       nf <- as.integer(input$future_n)
       for (i in seq_len(nf)) {
         nsc <- as.integer(input[[paste0("future_scen_n_", i)]] %||% "1")
@@ -2209,7 +2354,19 @@ server <- function(input, output, session) {
     if (!is.null(var_types) && !is.list(var_types)) var_types <- as.list(var_types)
     if (!is.null(var_types) && length(var_types) == 0) var_types <- NULL
 
-    if (is.null(input$future_n) || input$future_n == "NA") {
+    if (auto_future) {
+      # one period block per period; one scenario per SSP x GCM folder
+      sel <- gcm_selection()
+      pers <- unique(sel$period)
+      future_n_num <- length(pers)
+      future_list <- lapply(pers, function(p) {
+        sp <- sel[sel$period == p, , drop = FALSE]
+        list(period_label = p,
+             scenarios = lapply(seq_len(nrow(sp)), function(k)
+               list(label = paste0(sp$ssp[k], "_", sp$gcm[k]), asc_dir = sp$folder[k],
+                    ssp = sp$ssp[k], gcm = sp$gcm[k])))
+      })
+    } else if (is.null(input$future_n) || input$future_n == "NA") {
       future_n_num <- NULL
       future_list  <- NULL
     } else {
@@ -2314,7 +2471,16 @@ server <- function(input, output, session) {
       maxent_jar = input$maxent_jar,
 
       future_n = future_n_num,
-      future   = future_list
+      future   = future_list,
+
+      # ---- GCM ENSEMBLE + CHANGE MAPS (gcm_ensemble.R) ----
+      future_mode     = if (auto_future) "auto" else "manual",
+      gcm_root        = if (auto_future) input$gcm_root else NULL,
+      change_maps     = isTRUE(input$change_maps),
+      change_agree    = as.numeric(input$change_agree %||% 0.8),
+      change_tol_frac = as.numeric(input$change_tol_frac %||% 0.05),
+      change_mask     = if (nzchar(input$change_mask %||% "")) input$change_mask else NULL,
+      gcm_exclude     = if (auto_future && length(input$gcm_exclude) > 0) as.list(input$gcm_exclude) else NULL
     )
 
     if (length(cfg$models) == 0) cfg$models <- DEFAULT_MODELS[[dt]]

@@ -633,6 +633,14 @@ if (length(keep_algo) > 0 && length(built_full) > 0) {
   keep_full <- built_full[sub(".*_", "", built_full) %in% keep_algo]
 }
 models_chosen <- if (length(keep_full) > 0) keep_full else "all"
+if (identical(models_chosen, "all") && is_quant) {
+  msg <- paste0("No algorithm reached the ensemble thresholds on average (mean R2 >= ", ENS_MIN_R2,
+                "). All algorithms are passed to BIOMOD_EnsembleModeling, which keeps only the single ",
+                "cross-validation models that pass the threshold on their own. The ensemble may therefore ",
+                "rest on very few models (see ensemble_members.csv) and should be treated as indicative.")
+  warning(msg)
+  try(writeLines(msg, file.path(cfg$out_dir, "ENSEMBLE_BELOW_THRESHOLD.txt")), silent = TRUE)
+}
 
 safe_write_csv(
   data.frame(model = if (length(keep_algo) > 0) keep_algo else character(0)),
@@ -683,6 +691,20 @@ safe_write_csv(
   data.frame(model = if (length(ens_built) > 0) ens_built else "NONE"),
   file.path(cfg$out_dir, "ensemble_selected_models.csv")
 )
+# List the single models that each ensemble actually contains
+if (!is.null(ens)) {
+  mem <- tryCatch(as.character(get_kept_models(ens)), error = function(e) character(0))
+  if (length(mem) > 0) {
+    ev_m <- tryCatch(get_evaluations(model_out), error = function(e) NULL)
+    vv <- if (!is.null(ev_m) && all(c("full.name", "metric.eval") %in% names(ev_m))) {
+      e1 <- ev_m[ev_m$metric.eval == metric_select[1], , drop = FALSE]
+      e1[[if (use_data %in% names(e1)) use_data else "validation"]][match(mem, e1$full.name)]
+    } else NA
+    safe_write_csv(data.frame(model = mem, metric = metric_select[1], value = vv),
+                   file.path(cfg$out_dir, "ensemble_members.csv"))
+    message("Ensemble members: ", length(mem), " single model(s).")
+  }
+}
 
 if (!is.null(ens)) {
   eval_ens_long <- eval_to_long(get_evaluations(ens))
@@ -896,6 +918,18 @@ do_project <- function(bm_mod, new_env, proj_name) {
                      label = paste0("BIOMOD_Projection/", proj_name))
 }
 
+# Ensemble forecasting with the same number of decimals as the single-model
+# projections. biomod2 rounds ensemble predictions to digits = 0 by default, which
+# turns count/abundance ensembles into integers (e.g. an index ranging 3.1-6.4 keeps
+# only the values 4, 5, 6). 'relative' is stored on 0-1000 and is unaffected.
+do_ens_forecast <- function(bm_em, bm_proj, proj_name) {
+  call_with_fallback(BIOMOD_EnsembleForecasting,
+                     list(bm.em = bm_em, bm.proj = bm_proj, proj.name = proj_name,
+                          digits = if (identical(data_type, "relative")) 0L else proj_digits),
+                     optional = c("digits"),
+                     label = paste0("BIOMOD_EnsembleForecasting/", proj_name))
+}
+
 # Sabit sinif kesimleri: GUNUMUZ ensemble ortalamasindan BIR KEZ hesaplanir,
 # tum gelecek senaryolarinda DEGISTIRILMEDEN kullanilir (binary MaxTSS mantiginin
 # nicel karsiligi).
@@ -964,7 +998,7 @@ tryCatch({
 ens_cur <- NULL
 if (!is.null(ens)) {
   ens_cur <- tryCatch(
-    BIOMOD_EnsembleForecasting(bm.em = ens, bm.proj = proj_cur, proj.name = "current_ens"),
+    do_ens_forecast(ens, proj_cur, "current_ens"),
     error = function(e) { warning("Ensemble forecasting (gunumuz) basarisiz: ", conditionMessage(e)); NULL }
   )
 }
@@ -1002,7 +1036,7 @@ if (file.exists(rct_file)) {
     out_dir    = cfg$out_dir,
     sp_name    = cfg$sp_name %||% "",
     var_types  = cfg$var_types,
-    em_pick    = cfg$rc_em_pick %||% "EMwmean",
+    em_pick    = cfg$rc_em_pick %||% paste0("EMwmeanBy", metric_select[1]),  # name the metric: "EMwmean" alone matched ...ByRMSE first
     var_labels = cfg$var_labels,
     y_lab      = if (is_quant) "Predicted response (ensemble)" else "Class probability (ensemble)"
   ), silent = TRUE)
@@ -1045,6 +1079,10 @@ if (!do_future) {
   set_status("PROJECTION (future)")
   ref_names <- names(env)
   nf <- min(as.integer(cfg$future_n), length(cfg$future))
+  # registry of written projections -> GCM ensemble + change maps (gcm_ensemble.R)
+  gcm_registry <- data.frame(period = character(0), ssp = character(0), gcm = character(0),
+                             label = character(0), tag = character(0), folder = character(0),
+                             stringsAsFactors = FALSE)
 
   for (i in seq_len(nf)) {
     fb <- cfg$future[[i]]
@@ -1088,17 +1126,37 @@ if (!do_future) {
 
       if (!is.null(ens)) {
         ens_f <- tryCatch(
-          BIOMOD_EnsembleForecasting(bm.em = ens, bm.proj = proj_f,
-                                     proj.name = paste0(proj_name, "_ens")),
+          do_ens_forecast(ens, proj_f, paste0(proj_name, "_ens")),
           error = function(e) { warning("Ensemble forecasting basarisiz (", proj_name, "): ",
                                         conditionMessage(e)); NULL }
         )
         if (!is.null(ens_f)) {
           write_proj_rasters(ens_f, paste0(proj_name, "_ensemble"), em_breaks,
                              scale_div = SCALE_DIV)
+          gcm_registry[nrow(gcm_registry) + 1, ] <- list(
+            as.character(period_label), as.character(sc$ssp %||% NA_character_),
+            as.character(sc$gcm %||% NA_character_), as.character(sc_label),
+            paste0(proj_name, "_ensemble"), as.character(dirf))
         }
       }
     }
+  }
+
+  # -------------------- GCM ENSEMBLE + CHANGE MAPS --------------------
+  if (is_quant && nrow(gcm_registry) > 0 && !isFALSE(cfg$change_maps)) {
+    set_status("GCM ENSEMBLE + CHANGE MAPS")
+    gcm_file <- file.path(getwd(), "gcm_ensemble.R")
+    if (file.exists(gcm_file)) {
+      source(gcm_file, encoding = "UTF-8")
+      # Name the selection metric explicitly. "EMwmean" alone matched the
+      # EMwmeanByRMSE layer first (alphabetical order), not the R2-filtered ensemble.
+      if (is.null(cfg$change_em)) cfg$change_em <- paste0("EMwmeanBy", metric_select[1])
+      tryCatch(gcm_postprocess(cfg, gcm_registry, rasters_dir, plots_dir, cfg$out_dir,
+                               mode = "quant", resp_lab = resp_col),
+               error = function(e) warning("GCM ensemble / change maps failed: ", conditionMessage(e)))
+    } else warning("gcm_ensemble.R not found -> GCM ensemble and change maps skipped.")
+  } else if (is_qual && nrow(gcm_registry) > 0) {
+    message("Change maps are not produced for nominal responses.")
   }
   set_status("DONE")
 }
